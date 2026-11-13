@@ -1,0 +1,6 @@
+{
+  "uuid": "luma-bluejay-osk@luma.local",
+  "name": "Luma OSK for text-input v1 clients",
+  "description": "Opens the on-screen keyboard when a touch focuses a text field in clients that enable zwp_text_input_v3 version 1 only once per window (Qt). Mutter 50 shows the panel for v1 clients only on a re-enable.",
+  "shell-version": ["50"]
+}

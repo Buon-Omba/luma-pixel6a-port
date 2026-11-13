@@ -1,0 +1,446 @@
+From ec780ef39150526f27f69c4cb7792bca5f6fadb6 Mon Sep 17 00:00:00 2001
+From: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 14:58:36 +0100
+Subject: [PATCH 40/47] gs101: PCIe GEN4A_1 Wi-Fi on bluejay through the gs201
+ drivers
+
+PHY: a gs101 variant of phy-gs201-pcie with the gs101 PMA tables from
+Google's pcie-exynos-gs101-rc-cal.c (google-modules/soc/gs,
+android-gs-raviole-6.1-android16 @204078758737): no 38.4 MHz input
+clock block, gs101 TX/RX tuning, no PCS rate control or PLL/bias delay.
+udbg made optional. Host: google,gs101-pcie on the same driver.
+DT: pcie_1 and its PHY in gs101.dtsi (addresses, SPI 509 and HSI2
+clocks from stock gs101), bluejay's WL_REG_ON (gpp14-2), wake pins and
+PHY rails (LDO17M/LDO19M) from the stock CP2A dtbo, and a restricted
+DMA pool as on gs201-cheetah.
+---
+ .../boot/dts/exynos/google/gs101-bluejay.dts  |  97 +++++++++++++++
+ .../dts/exynos/google/gs101-pixel-common.dtsi |   4 +-
+ arch/arm64/boot/dts/exynos/google/gs101.dtsi  |  63 ++++++++++
+ drivers/pci/controller/dwc/pcie-gs201.c       |   1 +
+ drivers/phy/samsung/phy-gs201-pcie.c          | 113 +++++++++++++++---
+ 5 files changed, 258 insertions(+), 20 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+index 7a8d31a47..28cf01706 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
++++ b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+@@ -7,6 +7,7 @@
+ 
+ /dts-v1/;
+ 
++#include <dt-bindings/gpio/gpio.h>
+ #include "gs101-pixel-common.dtsi"
+ 
+ / {
+@@ -18,6 +19,18 @@ reserved-memory {
+ 		#address-cells = <2>;
+ 		#size-cells = <1>;
+ 
++		/*
++		 * All of the Wi-Fi chip's DMA buffers come from this pool (as on
++		 * gs201-cheetah, omarchy-mobile PR #143); the chip does not see its
++		 * writes above 4 GiB.
++		 */
++		wifi_dma_pool: wifi-dma-pool {
++			compatible = "restricted-dma-pool";
++			size = <0x1000000>;
++			alignment = <0x0 0x200000>;
++			alloc-ranges = <0x0 0x80000000 0x80000000>;
++		};
++
+ 		ramoops@fd3ff000 {
+ 			compatible = "ramoops";
+ 			reg = <0x0 0xfd3ff000 0x400000>;
+@@ -49,3 +62,87 @@ &spitouch {
+ 	fts,x-max = <1080>;
+ 	fts,y-max = <2400>;
+ };
++
++/*
++ * Wi-Fi: BCM4389 on PCIe GEN4A_1 (pcie_1), one lane at Gen2 as on stock bluejay
++ * (CP2A.260705.006 dtbo, board 0x20506): WL_REG_ON gpp14-2, host wake gpa7-0,
++ * device wake gph2-5, PHY rails LDO17M (0.85 V) and LDO19M (1.8 V).
++ */
++/ {
++	wlan_pwr: regulator-wlan {
++		compatible = "regulator-fixed";
++		regulator-name = "wlan-reg-on";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		gpio = <&gpp14 2 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		/* Google raises WL_REG_ON and waits 200 ms before link training */
++		startup-delay-us = <200000>;
++		pinctrl-0 = <&wlan_reg_on>;
++		pinctrl-names = "default";
++	};
++};
++
++&ldo17m_reg {
++	regulator-always-on;
++};
++
++&ldo19m_reg {
++	regulator-always-on;
++};
++
++&pinctrl_peric0 {
++	wlan_reg_on: wlan-reg-on-pins {
++		samsung,pins = "gpp14-2";
++		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
++		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
++	};
++};
++
++&pinctrl_far_alive {
++	wlan_host_wake: wlan-host-wake-pins {
++		samsung,pins = "gpa7-0";
++		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
++		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
++		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
++	};
++};
++
++&pinctrl_hsi2 {
++	wlan_dev_wake: wlan-dev-wake-pins {
++		samsung,pins = "gph2-5";
++		samsung,pin-function = <GS101_PIN_FUNC_INPUT>;
++		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
++		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
++	};
++};
++
++&pcie_1 {
++	status = "okay";
++	pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>, <&wlan_dev_wake>,
++		    <&wlan_host_wake>;
++	pinctrl-names = "default";
++
++	pcie@0,0 {
++		compatible = "pciclass,0604";
++		device_type = "pci";
++		reg = <0x0 0x0 0x0 0x0 0x0>;
++		bus-range = <0x01 0xff>;
++		#address-cells = <3>;
++		#size-cells = <2>;
++		ranges;
++		vpcie3v3-supply = <&wlan_pwr>;
++
++		wifi@0,0 {
++			compatible = "pci14e4,4441";
++			reg = <0x10000 0x0 0x0 0x0 0x0>;
++			brcm,board-type = "google,gs101-bluejay";
++			memory-region = <&wifi_dma_pool>;
++		};
++	};
++};
++
++&pcie_1_phy {
++	status = "okay";
++};
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
+index 09349d47c..226cda8f3 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
+@@ -361,7 +361,7 @@ ldo16m {
+ 				regulator-max-microvolt = <1300000>;
+ 			};
+ 
+-			ldo17m {
++			ldo17m_reg: ldo17m {
+ 				regulator-name = "vdd085_pcie1";
+ 				regulator-min-microvolt = <725000>;
+ 				regulator-max-microvolt = <1300000>;
+@@ -373,7 +373,7 @@ ldo18m {
+ 				regulator-max-microvolt = <1950000>;
+ 			};
+ 
+-			ldo19m {
++			ldo19m_reg: ldo19m {
+ 				regulator-name = "vdd18_pcie1";
+ 				regulator-min-microvolt = <1600000>;
+ 				regulator-max-microvolt = <1950000>;
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101.dtsi b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+index d0d24fb07..dc2f17cec 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+@@ -1739,6 +1739,69 @@ sysreg_hsi2: syscon@14420000 {
+ 			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_SYSREG_HSI2_PCLK>;
+ 		};
+ 
++		/*
++		 * PCIe GEN4A_1 in HSI2: the Wi-Fi controller (Google's pcie_1, ch-num 1).
++		 * Same block and addresses as gs201's; stock gs101 runs it at one lane, Gen2,
++		 * with I/A, without SysMMU and without cache coherency.
++		 */
++		pcie_1: pcie@14520000 {
++			compatible = "google,gs101-pcie";
++			reg = <0x14520000 0x1400>,
++			      <0x14800000 0x301000>,
++			      <0x60ffe000 0x2000>,
++			      <0x14500000 0x1000>;
++			reg-names = "elbi", "dbi", "config", "ia";
++			#address-cells = <3>;
++			#size-cells = <2>;
++			device_type = "pci";
++			ranges = <0x82000000 0x0 0x60000000 0x60000000 0x0 0xff0000>;
++			bus-range = <0x00 0xff>;
++			interrupts = <GIC_SPI 509 IRQ_TYPE_LEVEL_HIGH 0>;
++			#interrupt-cells = <1>;
++			interrupt-map-mask = <0 0 0 7>;
++			interrupt-map = <0 0 0 1 &pcie_1_intc 1>,
++					<0 0 0 2 &pcie_1_intc 2>,
++					<0 0 0 3 &pcie_1_intc 3>,
++					<0 0 0 4 &pcie_1_intc 4>;
++			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_DBI_ACLK_UG>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_MSTR_ACLK_UG>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_SLV_ACLK_UG>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_I_DRIVER_APB_CLK>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_IA_GEN4A_1_I_CLK>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_QE_PCIE_GEN4A_HSI2_ACLK>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_QE_PCIE_GEN4A_HSI2_PCLK>;
++			phys = <&pcie_1_phy>;
++			phy-names = "pcie";
++			pinctrl-0 = <&pcie1_clkreq>, <&pcie1_perst>;
++			pinctrl-names = "default";
++			reset-gpios = <&gph2 0 GPIO_ACTIVE_LOW>;
++			samsung,cmu = <&cmu_hsi2>;
++			num-lanes = <1>;
++			max-link-speed = <2>;
++			status = "disabled";
++
++			pcie_1_intc: legacy-interrupt-controller {
++				#address-cells = <0>;
++				interrupt-controller;
++				#interrupt-cells = <1>;
++			};
++		};
++
++		pcie_1_phy: phy@14550000 {
++			compatible = "google,gs101-pcie-phy";
++			reg = <0x14550000 0x2000>,
++			      <0x14540000 0x1000>,
++			      <0x14521400 0x10>;
++			reg-names = "pma", "pcs", "rst";
++			clocks = <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCIE_003_PHY_REFCLK_IN>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCS_PMA_PHY_UDBG_I_APB_PCLK>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCS_PMA_PIPE_PAL_PCIE_I_APB_PCLK>,
++				 <&cmu_hsi2 CLK_GOUT_HSI2_PCIE_GEN4_1_PCS_PMA_PCIEPHY210X2_QCH_I_APB_PCLK>;
++			samsung,pmu-syscon = <&pmu_system_controller 0x3ec4>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
+ 		pinctrl_hsi2: pinctrl@14440000 {
+ 			compatible = "google,gs101-pinctrl";
+ 			reg = <0x14440000 0x00001000>;
+diff --git a/drivers/pci/controller/dwc/pcie-gs201.c b/drivers/pci/controller/dwc/pcie-gs201.c
+index af650d763..c0c5af77e 100644
+--- a/drivers/pci/controller/dwc/pcie-gs201.c
++++ b/drivers/pci/controller/dwc/pcie-gs201.c
+@@ -1187,6 +1187,7 @@ static void gs201_pcie_remove(struct platform_device *pdev)
+ }
+ 
+ static const struct of_device_id gs201_pcie_of_match[] = {
++	{ .compatible = "google,gs101-pcie" },	/* same HSI2 GEN4A_1 block, Pixel 6/6a */
+ 	{ .compatible = "google,gs201-pcie" },
+ 	{ }
+ };
+diff --git a/drivers/phy/samsung/phy-gs201-pcie.c b/drivers/phy/samsung/phy-gs201-pcie.c
+index 4218f8674..611c43f84 100644
+--- a/drivers/phy/samsung/phy-gs201-pcie.c
++++ b/drivers/phy/samsung/phy-gs201-pcie.c
+@@ -18,6 +18,7 @@
+ #include <linux/iopoll.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/of_device.h>
+ #include <linux/phy/phy.h>
+ #include <linux/platform_device.h>
+ #include <linux/regmap.h>
+@@ -167,6 +168,59 @@ static const struct gs201_pcie_phy_reg gs201_pma_lane_clk[] = {
+ 	{ 0xbe4, 0xd0 },
+ };
+ 
++/*
++ * gs101 (Tensor): Google's gs101 CAL (pcie-exynos-gs101-rc-cal.c, google-modules/soc/gs
++ * android-gs-raviole-6.1-android16 @204078758737). Same PMA as gs201 without the 38.4 MHz
++ * input-clock block, with gs101's own TX and RX tuning.
++ */
++static const struct gs201_pcie_phy_reg gs101_pma_common[] = {
++	{ 0x018, 0x50 }, { 0x048, 0x33 }, { 0x068, 0x01 }, { 0x070, 0x12 },
++	{ 0x08c, 0x00 }, { 0x090, 0x21 }, { 0x0b0, 0x14 }, { 0x0b8, 0x50 },
++	{ 0x0e0, 0x51 }, { 0x100, 0x00 }, { 0x104, 0x80 }, { 0x140, 0x38 },
++	{ 0x180, 0xa4 },
++	{ 0x188, 0x03 },	/* LCPLL 100 MHz, no divider */
++	{ 0x2a8, 0x38 }, { 0x2e4, 0x12 },
++	{ 0x400, 0x80 }, { 0x408, 0x20 }, { 0x550, 0x00 }, { 0x5a8, 0x00 },
++	{ 0x5ec, 0xff },
++	{ 0x458, 0x02 }, { 0x5b0, 0x34 }, { 0x450, 0x20 },
++};
++
++static const struct gs201_pcie_phy_reg gs101_pma_lane[] = {
++	{ 0x82c, 0x08 }, { 0x830, 0x24 }, { 0x878, 0x80 }, { 0x894, 0x40 },
++	{ 0x8c0, 0x00 }, { 0x8f4, 0x30 }, { 0x908, 0x05 }, { 0x90c, 0xe0 },
++	{ 0x914, 0xd4 }, { 0x91c, 0xd3 }, { 0x920, 0xce }, { 0x924, 0x01 },
++	{ 0x928, 0x35 }, { 0x92c, 0xba }, { 0x930, 0x41 }, { 0x934, 0x15 },
++	{ 0x938, 0x13 }, { 0x93c, 0x4e }, { 0x948, 0x43 }, { 0x94c, 0xfc },
++	{ 0x954, 0x10 }, { 0x958, 0x69 }, { 0x964, 0x40 }, { 0x9b4, 0xf6 },
++	{ 0x9c0, 0x2d }, { 0x9c4, 0xb7 }, { 0x9cc, 0x3c }, { 0x9dc, 0x7e },
++	{ 0xa40, 0x02 }, { 0xa70, 0x26 }, { 0xa74, 0x00 },
++	{ 0xb40, 0x06 }, { 0xb44, 0x06 }, { 0xb48, 0x04 }, { 0xb4c, 0x03 },
++	{ 0xb50, 0x03 }, { 0xb54, 0x03 }, { 0xb58, 0x03 }, { 0xb5c, 0x03 },
++	{ 0xc10, 0x1b }, { 0xc44, 0x10 }, { 0xc48, 0x10 }, { 0xc4c, 0x10 },
++	{ 0xc50, 0x10 }, { 0xc54, 0x02 }, { 0xc58, 0x02 }, { 0xc5c, 0x02 },
++	{ 0xc60, 0x02 }, { 0xc6c, 0x02 }, { 0xc70, 0x02 }, { 0xca8, 0xe7 },
++	{ 0xcac, 0x00 }, { 0xcb0, 0x0e }, { 0xccc, 0x1c }, { 0xcd4, 0x05 },
++	{ 0xcd8, 0x77 }, { 0xcdc, 0x7a }, { 0xdb4, 0x2f },
++	/* TX termination resistor, TX idrv */
++	{ 0x9cc, 0x00 }, { 0xcd8, 0xff }, { 0xcdc, 0x6e },
++	{ 0x82c, 0x0f }, { 0x830, 0x60 }, { 0x834, 0x7e },
++	/* TX pre_lvl */
++	{ 0x824, 0x10 }, { 0x82c, 0x4f }, { 0x818, 0x1f }, { 0x820, 0x00 },
++	/* RX tuning */
++	{ 0x928, 0x3d }, { 0x920, 0xca }, { 0xa08, 0x2f }, { 0x92c, 0xb8 },
++	{ 0x914, 0xf4 }, { 0x96c, 0x55 }, { 0x988, 0x78 }, { 0x934, 0x17 },
++	{ 0x93c, 0x4c }, { 0x994, 0x3b }, { 0x948, 0x73 }, { 0xb9c, 0x3f },
++	{ 0x9c8, 0x20 }, { 0x9c4, 0xff }, { 0xc08, 0x05 }, { 0xc3c, 0x04 },
++	{ 0xc40, 0x04 },
++};
++
++struct gs201_pcie_phy_data {
++	const struct gs201_pcie_phy_reg *common, *lane, *lane_clk;
++	size_t n_common, n_lane, n_lane_clk;
++	bool pcs_rate_ctrl;	/* PCS 0x184 in power-down/clear (gs201) */
++	bool pll_bias_delay;	/* PCS 0x190 PLL & bias off delay (gs201) */
++};
++
+ /* PHY power-down, per lane (offsets for lane 0) */
+ static const struct gs201_pcie_phy_reg gs201_pma_lane_pwrdn[] = {
+ 	{ 0x800, 0x0a }, { 0x804, 0xbf }, { 0xa40, 0x02 }, { 0xa44, 0x2a },
+@@ -184,6 +238,7 @@ static const struct gs201_pcie_phy_reg gs201_pma_reset_vals[] = {
+ 
+ struct gs201_pcie_phy {
+ 	struct device *dev;
++	const struct gs201_pcie_phy_data *data;
+ 	void __iomem *pma;
+ 	void __iomem *pcs;
+ 	void __iomem *rst;
+@@ -254,9 +309,11 @@ static void gs201_pcie_phy_pwrdn(struct gs201_pcie_phy *gp)
+ 	gs201_pcie_phy_rmw(gp->pma + GS201_PMA_CMN_CTRL,
+ 			   GS201_PMA_CMN_CTRL_PMA_EN, 0);
+ 
+-	gs201_phy_trace(gp, "about to read PCS 0x184 (first PCS read): rate switching off");
+-	gs201_pcie_phy_rmw(gp->pcs + GS201_PCS_RATE_CTRL,
+-			   GS201_PCS_RATE_CTRL_SWITCH, 0);
++	if (gp->data->pcs_rate_ctrl) {
++		gs201_phy_trace(gp, "about to read PCS 0x184 (first PCS read): rate switching off");
++		gs201_pcie_phy_rmw(gp->pcs + GS201_PCS_RATE_CTRL,
++				   GS201_PCS_RATE_CTRL_SWITCH, 0);
++	}
+ }
+ 
+ static void gs201_pcie_phy_pwrdn_clear(struct gs201_pcie_phy *gp)
+@@ -277,8 +334,10 @@ static void gs201_pcie_phy_pwrdn_clear(struct gs201_pcie_phy *gp)
+ 			writel(0, gp->pma + lane * GS201_PMA_LANE_STRIDE +
+ 			       gs201_pma_lane_pwrdn[i].off);
+ 
+-	gs201_phy_trace(gp, "about to write PCS 0x184 (rate change and power-down reset)");
+-	writel(0, gp->pcs + GS201_PCS_RATE_CTRL);
++	if (gp->data->pcs_rate_ctrl) {
++		gs201_phy_trace(gp, "about to write PCS 0x184 (rate change and power-down reset)");
++		writel(0, gp->pcs + GS201_PCS_RATE_CTRL);
++	}
+ }
+ 
+ /* Google's debug check that the PMA came out of reset with its defaults */
+@@ -329,18 +388,15 @@ static void gs201_pcie_phy_config(struct gs201_pcie_phy *gp, unsigned int lanes)
+ 
+ 	gs201_phy_trace(gp, "about to write the PMA tables (common, %u lane(s), lane clocks)",
+ 			lanes);
+-	gs201_pcie_phy_write_table(gp->pma, gs201_pma_common,
+-				   ARRAY_SIZE(gs201_pma_common));
++	gs201_pcie_phy_write_table(gp->pma, gp->data->common, gp->data->n_common);
+ 
+ 	for (lane = 0; lane < lanes; lane++)
+ 		gs201_pcie_phy_write_table(gp->pma + lane * GS201_PMA_LANE_STRIDE,
+-					   gs201_pma_lane,
+-					   ARRAY_SIZE(gs201_pma_lane));
++					   gp->data->lane, gp->data->n_lane);
+ 
+-	for (lane = 0; lane < GS201_PHY_MAX_LANES; lane++)
++	for (lane = 0; gp->data->n_lane_clk && lane < GS201_PHY_MAX_LANES; lane++)
+ 		gs201_pcie_phy_write_table(gp->pma + lane * GS201_PMA_LANE_STRIDE,
+-					   gs201_pma_lane_clk,
+-					   ARRAY_SIZE(gs201_pma_lane_clk));
++					   gp->data->lane_clk, gp->data->n_lane_clk);
+ 
+ 	gs201_phy_trace(gp, "about to write PCS 0x004 0x154 0x150 0x170 0x008 0x190");
+ 	for (lane = 0; lane < lanes; lane++) {
+@@ -359,8 +415,9 @@ static void gs201_pcie_phy_config(struct gs201_pcie_phy *gp, unsigned int lanes)
+ 				   GS201_PCS_ERIO_CLK_GATE_MASK,
+ 				   GS201_PCS_ERIO_CLK_GATE_MASK);
+ 
+-	/* PLL and bias enable off delay */
+-	writel(0x100b0808, gp->pcs + GS201_PCS_PLL_BIAS_OFF_DELAY);
++	/* PLL and bias enable off delay (gs201 only) */
++	if (gp->data->pll_bias_delay)
++		writel(0x100b0808, gp->pcs + GS201_PCS_PLL_BIAS_OFF_DELAY);
+ 
+ 	gs201_phy_trace(gp, "about to release CMN_RST and PORT_RST");
+ 	writel(1, gp->rst + GS201_PHY_RST_CMN);
+@@ -570,6 +627,9 @@ static int gs201_pcie_phy_probe(struct platform_device *pdev)
+ 		return -ENOMEM;
+ 
+ 	gp->dev = dev;
++	gp->data = of_device_get_match_data(dev);
++	if (!gp->data)
++		return -EINVAL;
+ 
+ 	/* Only mappings here: the PHY is not touched until phy_init() */
+ 	gp->pma = devm_platform_ioremap_resource_byname(pdev, "pma");
+@@ -584,9 +644,12 @@ static int gs201_pcie_phy_probe(struct platform_device *pdev)
+ 	if (IS_ERR(gp->rst))
+ 		return PTR_ERR(gp->rst);
+ 
+-	gp->udbg = devm_platform_ioremap_resource_byname(pdev, "udbg");
+-	if (IS_ERR(gp->udbg))
+-		return PTR_ERR(gp->udbg);
++	/* Mapped for debugging only; gs101's DT need not describe it */
++	if (platform_get_resource_byname(pdev, IORESOURCE_MEM, "udbg")) {
++		gp->udbg = devm_platform_ioremap_resource_byname(pdev, "udbg");
++		if (IS_ERR(gp->udbg))
++			return PTR_ERR(gp->udbg);
++	}
+ 
+ 	gp->pmu = exynos_get_pmu_regmap_by_phandle(dev->of_node,
+ 						   "samsung,pmu-syscon");
+@@ -615,8 +678,22 @@ static int gs201_pcie_phy_probe(struct platform_device *pdev)
+ 	return PTR_ERR_OR_ZERO(provider);
+ }
+ 
++static const struct gs201_pcie_phy_data gs101_pcie_phy_data = {
++	.common = gs101_pma_common, .n_common = ARRAY_SIZE(gs101_pma_common),
++	.lane = gs101_pma_lane, .n_lane = ARRAY_SIZE(gs101_pma_lane),
++};
++
++static const struct gs201_pcie_phy_data gs201_pcie_phy_data = {
++	.common = gs201_pma_common, .n_common = ARRAY_SIZE(gs201_pma_common),
++	.lane = gs201_pma_lane, .n_lane = ARRAY_SIZE(gs201_pma_lane),
++	.lane_clk = gs201_pma_lane_clk, .n_lane_clk = ARRAY_SIZE(gs201_pma_lane_clk),
++	.pcs_rate_ctrl = true,
++	.pll_bias_delay = true,
++};
++
+ static const struct of_device_id gs201_pcie_phy_of_match[] = {
+-	{ .compatible = "google,gs201-pcie-phy" },
++	{ .compatible = "google,gs101-pcie-phy", .data = &gs101_pcie_phy_data },
++	{ .compatible = "google,gs201-pcie-phy", .data = &gs201_pcie_phy_data },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, gs201_pcie_phy_of_match);
+-- 
+2.56.0
+

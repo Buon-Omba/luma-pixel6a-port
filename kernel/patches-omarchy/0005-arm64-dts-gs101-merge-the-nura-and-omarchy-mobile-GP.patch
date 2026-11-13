@@ -1,0 +1,59 @@
+From 9994eaf4a75139431d3635332fdba168972e746b Mon Sep 17 00:00:00 2001
+From: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 14:35:58 +0100
+Subject: [PATCH 05/47] arm64: dts: gs101: merge the nura and omarchy-mobile
+ GPU nodes
+
+nura already carried a gs101 GPU node and supplies under other names.
+Keep the single node from omarchy-mobile PR #3 (045ba46a, commit 0004)
+and give the nura supply labels the google,gs101-mali names. Replaces
+the raven-only enable (PR #3 0005) for every gs101 Pixel.
+---
+ .../boot/dts/exynos/google/gs101-pixel-common.dtsi     | 10 ++++++----
+ arch/arm64/boot/dts/exynos/google/gs101.dtsi           |  9 ---------
+ 2 files changed, 6 insertions(+), 13 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
+index 92fb591b3..09349d47c 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101-pixel-common.dtsi
+@@ -649,10 +649,12 @@ eeprom: eeprom@50 {
+ };
+ 
+ &gpu {
+-     mali-supply = <&buck2s_reg>;
+-     buck8s-supply = <&buck8s_reg>;
+-     ldo1s-supply = <&ldo1s_reg>;
+-     buck7m-supply = <&buck7m_reg>;
++	/* nomi delle alimentazioni come in google,gs101-mali (omarchy-mobile PR #3) */
++	mali-supply = <&buck2s_reg>;	/* vdd_g3d */
++	g3d-l2-supply = <&buck8s_reg>;	/* vdd_g3d_l2 */
++	g3d-m-supply = <&ldo1s_reg>;	/* vdd_g3d_m */
++	int-m-supply = <&buck7m_reg>;	/* vdd_int_m */
++	status = "okay";
+ };
+ 
+ &hsi2c_12 {
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101.dtsi b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+index 74704ba96..d0d24fb07 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101.dtsi
++++ b/arch/arm64/boot/dts/exynos/google/gs101.dtsi
+@@ -1931,15 +1931,6 @@ cmu_top: clock-controller@1e080000 {
+ 			clock-names = "oscclk";
+ 		};
+ 
+-		gpu: gpu@1c500000 {
+-			compatible = "google,gs101-mali", "arm,mali-valhall-jm";
+-			reg = <0x1c500000 0x5000>;
+-			clocks = <&ext_24_5m>;
+-			interrupt-names = "job", "mmu", "gpu";
+-			interrupts = <GIC_SPI 420 IRQ_TYPE_LEVEL_HIGH 0>,
+-				     <GIC_SPI 421 IRQ_TYPE_LEVEL_HIGH 0>,
+-				     <GIC_SPI 419 IRQ_TYPE_LEVEL_HIGH 0>;
+-		};
+ 	};
+ 
+ 	apm_sram: sram@2039000 {
+-- 
+2.56.0
+

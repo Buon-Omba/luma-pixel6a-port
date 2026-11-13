@@ -1,0 +1,22 @@
+From: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: exynos: gs101-bluejay: declare handset chassis
+
+Luma (and other mobile distributions) start their phone shell when the
+device tree says the board is a handset.
+
+Signed-off-by: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+---
+ arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+--- a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
++++ b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+@@ -12,6 +12,7 @@
+ / {
+ 	model = "Bluejay";
+ 	compatible = "google,gs101-bluejay", "google,gs101";
++	chassis-type = "handset";
+ };
+ 
+ &cont_splash_mem {

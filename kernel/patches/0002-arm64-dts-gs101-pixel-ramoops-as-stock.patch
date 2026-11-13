@@ -1,0 +1,30 @@
+From: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+Subject: [PATCH] arm64: dts: exynos: gs101-bluejay: add ramoops at the stock location
+
+Stock bluejay (CP2A.260705.006 vendor_boot DTB) keeps ramoops at
+0xfd3ff000, 4 MiB, console 2 MiB and pmsg 2 MiB. Use the same region so
+kernel logs survive a warm reset.
+
+Signed-off-by: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+---
+--- a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
++++ b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+@@ -13,6 +13,18 @@
+ 	model = "Bluejay";
+ 	compatible = "google,gs101-bluejay", "google,gs101";
+ 	chassis-type = "handset";
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <1>;
++
++		ramoops@fd3ff000 {
++			compatible = "ramoops";
++			reg = <0x0 0xfd3ff000 0x400000>;
++			console-size = <0x200000>;
++			pmsg-size = <0x200000>;
++		};
++	};
+ };
+ 
+ &cont_splash_mem {

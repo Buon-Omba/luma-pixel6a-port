@@ -1,0 +1,74 @@
+From fa4a3849e9b7d22f9424abe3b68a33e3819db80f Mon Sep 17 00:00:00 2001
+From: Buon-Omba <302052335+Buon-Omba@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 15:30:22 +0100
+Subject: [PATCH 46/47] arm64: dts: exynos: google: gs101-bluejay: add
+ Bluetooth
+
+The BCM4389 on the APM USI1 UART with stock bluejay's lines (CP2A dtbo
+btbcm: BT_REG_ON gpp16-2, device wake gpp14-3, host wake gpa6-6), the
+same as raven in omarchy-mobile PR #6, whose generic commits 1, 2, 4
+and 5 precede this one (the bcm4389 match entry added to nura's hci_bcm).
+---
+ .../boot/dts/exynos/google/gs101-bluejay.dts  | 49 +++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+index 28cf01706..c1c6e6c71 100644
+--- a/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
++++ b/arch/arm64/boot/dts/exynos/google/gs101-bluejay.dts
+@@ -146,3 +146,52 @@ wifi@0,0 {
+ &pcie_1_phy {
+ 	status = "okay";
+ };
++
++/*
++ * Bluetooth: the BCM4389 on the APM USI1 UART, with the lines of stock bluejay
++ * (CP2A.260705.006 dtbo "btbcm"): BT_REG_ON gpp16-2, device wake gpp14-3,
++ * host wake gpa6-6 -- the same as raven (omarchy-mobile PR #6).
++ */
++&usi_apm1 {
++	status = "okay";
++};
++
++&serial_apm1 {
++	status = "okay";
++
++	bluetooth {
++		compatible = "brcm,bcm4389-bt";
++		shutdown-gpios = <&gpp16 2 GPIO_ACTIVE_HIGH>;
++		device-wakeup-gpios = <&gpp14 3 GPIO_ACTIVE_HIGH>;
++		interrupts-extended = <&gpa6 6 IRQ_TYPE_EDGE_RISING>;
++		interrupt-names = "host-wakeup";
++		max-speed = <3000000>;
++		pinctrl-0 = <&bt_reg_on &bt_dev_wake &bt_host_wake>;
++		pinctrl-names = "default";
++	};
++};
++
++&pinctrl_far_alive {
++	bt_host_wake: bt-host-wake-pins {
++		samsung,pins = "gpa6-6";
++		samsung,pin-function = <GS101_PIN_FUNC_EINT>;
++		samsung,pin-pud = <GS101_PIN_PULL_DOWN>;
++		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
++	};
++};
++
++&pinctrl_peric0 {
++	bt_dev_wake: bt-dev-wake-pins {
++		samsung,pins = "gpp14-3";
++		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
++		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
++	};
++
++	bt_reg_on: bt-reg-on-pins {
++		samsung,pins = "gpp16-2";
++		samsung,pin-function = <GS101_PIN_FUNC_OUTPUT>;
++		samsung,pin-pud = <GS101_PIN_PULL_NONE>;
++		samsung,pin-drv = <GS101_PIN_DRV_2_5_MA>;
++	};
++};
+-- 
+2.56.0
+

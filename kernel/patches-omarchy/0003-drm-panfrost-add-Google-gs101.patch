@@ -1,0 +1,47 @@
+From 02d07d29d65cac7de124ed529b2311d6ed2f348d Mon Sep 17 00:00:00 2001
+From: saiththerobo <the.tom.sharp@gmail.com>
+Date: Thu, 15 Oct 2026 14:29:36 +0100
+Subject: [PATCH 03/47] drm/panfrost: add Google gs101
+
+gs101's Mali-G78 needs four rails on (VDD_G3D, VDD_G3D_L2, VDD_G3D_M,
+VDD_INT_M); there is no DVFS yet, so they stay where the bootloader put
+them.
+
+The G78 is a Valhall v9 GPU like the G57 that the MediaTek mt8188,
+mt8192 and mt8370 entries describe, and those all set
+GPU_QUIRK_FORCE_AARCH64_PGTABLE. Without it the G78 walked the legacy
+Mali LPAE tables: every fragment job failed with DATA_INVALID_FAULT at
+its own job header, and the header read back with a zero job type. With
+the quirk, clears, solid, blended and textured draws (up to 4096x4096,
+mipmapped) render the expected pixels and the GPU reports no fault;
+Hyprland runs on the G78.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Signed-off-by: saiththerobo <the.tom.sharp@gmail.com>
+---
+ drivers/gpu/drm/panfrost/panfrost_drv.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/panfrost/panfrost_drv.c b/drivers/gpu/drm/panfrost/panfrost_drv.c
+index ad29bc404..a9d42c95e 100644
+--- a/drivers/gpu/drm/panfrost/panfrost_drv.c
++++ b/drivers/gpu/drm/panfrost/panfrost_drv.c
+@@ -1079,12 +1079,14 @@ static const struct panfrost_compatible default_data = {
+ 	.pm_domain_names = NULL,
+ };
+ 
+-static const char * const gs101_supplies[] = { "mali", "buck8s", "ldo1s", "buck7m" };
++/* gs101 (Pixel 6): the G3D rails, all always-on; no DVFS yet */
++static const char * const gs101_supplies[] = { "mali", "g3d-l2", "g3d-m", "int-m", NULL };
+ static const struct panfrost_compatible gs101_data = {
+ 	.num_supplies = ARRAY_SIZE(gs101_supplies) - 1,
+ 	.supply_names = gs101_supplies,
+ 	.num_pm_domains = 1, /* optional */
+ 	.pm_domain_names = NULL,
++	.gpu_quirks = BIT(GPU_QUIRK_FORCE_AARCH64_PGTABLE),
+ };
+ 
+ 
+-- 
+2.56.0
+

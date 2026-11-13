@@ -1,0 +1,9 @@
+build/
+hosttools/
+luma/
+sources/
+device-info/
+*.zip
+*.img
+*.bin
+*.pdf
