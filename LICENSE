@@ -23,7 +23,3 @@ OTHER DEALINGS IN THE SOFTWARE.
 
 For more information, please refer to <https://unlicense.org/>
 
----
-Exceptions (see "Licensing" in README.md): kernel/ is GPL-2.0-only,
-scripts/compose/ and initramfs-debug/hooks/20-luma-bluejay-device.sh are
-Apache-2.0 (derived from SimplyLuma/luma). Their texts are in LICENSES/.
